@@ -1,0 +1,32 @@
+services:
+  n8n:
+    # Use the official n8n image with latest stable release
+    image: docker.n8n.io/n8nio/n8n
+    container_name: todoist-to-notion
+    # Always restart unless explicitly stopped
+    restart: unless-stopped
+    ports:
+      # Expose n8n editor on localhost:5678
+      - "5678:5678"
+    environment:
+      # Bind n8n to localhost
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      # Required for webhook triggers (e.g. Todoist polling)
+      - WEBHOOK_URL=http://localhost:5678/
+      # Set default timezone for schedule triggers
+      - GENERIC_TIMEZONE=Europe/Berlin
+      # Enable basic authentication (credentials from .env)
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=${N8N_USER}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD}
+    volumes:
+      # Persist n8n settings, credentials, and execution history
+      - n8n_data:/home/node/.n8n
+      # Mount local workflows folder so exports are saved outside the container
+      - ./workflows:/home/node/.n8n/workflows
+
+# Named volume so n8n data survives container rebuilds
+volumes:
+  n8n_data:

@@ -1,0 +1,228 @@
+{
+  "name": "Todoist → Notion Backlog Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "resource": "sync",
+        "syncType": "all"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000001",
+      "name": "Todoist Trigger",
+      "type": "n8n-nodes-base.todoistTrigger",
+      "typeVersion": 1,
+      "position": [300, 150],
+      "notes": "Polls Todoist for new tasks.\n\nAfter importing, open this node and:\n1. Select your Todoist credential\n2. Under 'Filters', add a project filter for 'Backlog'\n\nAlternatively, keep it unfiltered and add a Filter node before the Code node.\n\nOutput fields used downstream:\n  - id (task ID)\n  - content (task name)\n  - description (task description)\n  - priority (1-4, where 4 = p1/urgent)"
+    },
+    {
+      "parameters": {
+        "jsCode": "// -------------------------------------------------\n// Extract keyword from task name for epic matching\n// and normalize all task data for downstream nodes.\n// -------------------------------------------------\n\nconst task = $input.first().json;\n\n// --- Keyword extraction ---\n// Strategy: take the text before the first colon, dash, or em-dash.\n// Fall back to the first two words if no delimiter found.\nconst taskName = task.content || '';\nconst parts = taskName.split(/[:\\-\\u2013\\u2014]/);\nconst firstPart = parts[0].trim();\nconst words = firstPart.split(/\\s+/);\nconst keyword = words.slice(0, 2).join(' ');\n\n// --- Priority mapping (Todoist → Notion) ---\n// Todoist: 4=p1 (most urgent), 1=p4 (least urgent)\nconst priorityMap = { 4: 'Urgent', 3: 'High', 2: 'Medium', 1: 'Low' };\n\nreturn {\n  keyword: keyword || taskName,\n  taskId: String(task.id),\n  taskName: taskName,\n  taskDescription: task.description || '',\n  taskPriority: priorityMap[task.priority] || 'Medium',\n  taskUrl: task.url || '',\n  todoistPriority: task.priority\n};"
+      },
+      "id": "a1b2c3d4-0002-4000-8000-000000000002",
+      "name": "Extract Keyword",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [600, 150],
+      "notes": "Transforms the raw Todoist task into a clean payload for the rest of the workflow.\n\nFields produced:\n  keyword         — text used to search for a matching epic\n  taskId          — Todoist task ID (stored on the Notion ticket)\n  taskName        — becomes the Notion ticket title\n  taskDescription — becomes the Notion ticket description\n  taskPriority    — mapped to Notion select (Urgent / High / Medium / Low)\n  taskUrl         — link back to the Todoist task"
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": "YOUR_EPICS_DB_ID",
+        "returnAll": false,
+        "limit": 5,
+        "simple": true
+      },
+      "id": "a1b2c3d4-0003-4000-8000-000000000003",
+      "name": "Search Epics",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2,
+      "position": [900, 150],
+      "notes": "Queries the Epics database for a page whose title contains the keyword.\n\n⚠️  CONFIGURATION REQUIRED:\n1. Replace YOUR_EPICS_DB_ID with your actual Epics database ID\n   (from the database URL: notion.so/workspace/<DB_ID>?v=...)\n2. In the 'Filter' field, add a filter:\n     Property: Name (or your title column)\n     Condition: Contains\n     Value: {{ $json.keyword }}\n\nIf no matching epic is found, the IF node routes to Create Epic.\nOtherwise, the first match is used as the linked epic."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "string"
+          },
+          "conditions": [
+            {
+              "id": "epic_found_check",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "a1b2c3d4-0004-4000-8000-000000000004",
+      "name": "Epic Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1200, 150],
+      "notes": "Routes the flow based on whether the Notion search returned any results.\n\nTRUE  (epic found)    → goes directly to Create Backlog Ticket\nFALSE (no epic found) → goes to Create Epic first, then Create Backlog Ticket\n\nBoth branches converge at Create Backlog Ticket so there is only one ticket-creation node."
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "create",
+        "databaseId": "YOUR_EPICS_DB_ID",
+        "properties": {
+          "Name": {
+            "title": [
+              {
+                "text": {
+                  "content": "={{ $('Extract Keyword').item.json.keyword }}"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "id": "a1b2c3d4-0005-4000-8000-000000000005",
+      "name": "Create Epic",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2,
+      "position": [1500, 350],
+      "notes": "Creates a new page in the Epics database.\n\nOnly runs when no matching epic was found (IF false branch).\nUses the keyword extracted from the task name as the epic title.\n\nThe newly created page ID flows into Create Backlog Ticket for the\nEpic relation."
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "create",
+        "databaseId": "YOUR_BACKLOG_DB_ID",
+        "properties": {
+          "Name": {
+            "title": [
+              {
+                "text": {
+                  "content": "={{ $('Extract Keyword').item.json.taskName }}"
+                }
+              }
+            ]
+          },
+          "Description": {
+            "rich_text": [
+              {
+                "text": {
+                  "content": "={{ $('Extract Keyword').item.json.taskDescription }}"
+                }
+              }
+            ]
+          },
+          "Priority": {
+            "select": {
+              "name": "={{ $('Extract Keyword').item.json.taskPriority }}"
+            }
+          },
+          "Status": {
+            "status": {
+              "name": "Backlog"
+            }
+          },
+          "Todoist ID": {
+            "rich_text": [
+              {
+                "text": {
+                  "content": "={{ $('Extract Keyword').item.json.taskId }}"
+                }
+              }
+            ]
+          },
+          "Epic": {
+            "relation": [
+              {
+                "id": "={{ $json.id }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "a1b2c3d4-0006-4000-8000-000000000006",
+      "name": "Create Backlog Ticket",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2,
+      "position": [1500, 150],
+      "notes": "Creates the backlog ticket in Notion with all fields mapped from the Todoist task.\n\nThis node runs regardless of whether an epic was found or created.\nIt receives the epic page from either:\n  - Search Epics → IF (true)  → here   (found epic)\n  - Search Epics → IF (false) → Create Epic → here   (new epic)\n\nIn both cases, {{ $json.id }} resolves to the epic's Notion page ID.\n\n⚠️  CONFIGURATION REQUIRED:\n1. Replace YOUR_BACKLOG_DB_ID with your actual Backlog database ID\n2. Verify property names match your Notion database schema:\n     - Name (title)\n     - Description (rich_text)\n     - Priority (select: Urgent / High / Medium / Low)\n     - Status (status: Backlog)\n     - Todoist ID (rich_text)\n     - Epic (relation → Epics database)\n\n   Rename these keys in the JSON if your schema uses different names."
+    }
+  ],
+  "connections": {
+    "Todoist Trigger": {
+      "main": [
+        [
+          {
+            "node": "Extract Keyword",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Keyword": {
+      "main": [
+        [
+          {
+            "node": "Search Epics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Epics": {
+      "main": [
+        [
+          {
+            "node": "Epic Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Epic Found?": {
+      "main": [
+        [
+          {
+            "node": "Create Backlog Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Epic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Epic": {
+      "main": [
+        [
+          {
+            "node": "Create Backlog Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "pinData": {},
+  "versionId": "1.0.0",
+  "active": false
+}
