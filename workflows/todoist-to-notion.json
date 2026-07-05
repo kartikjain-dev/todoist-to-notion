@@ -28,7 +28,7 @@
       "parameters": {
         "resource": "databasePage",
         "operation": "getAll",
-        "databaseId": "YOUR_EPICS_DB_ID",
+        "databaseId": "c3e27dbc16f14a88bfaef93f507100d1",
         "returnAll": false,
         "limit": 5,
         "simple": true
@@ -38,7 +38,7 @@
       "type": "n8n-nodes-base.notion",
       "typeVersion": 2,
       "position": [900, 150],
-      "notes": "Queries the Epics database for a page whose title contains the keyword.\n\n⚠️  CONFIGURATION REQUIRED:\n1. Replace YOUR_EPICS_DB_ID with your actual Epics database ID\n   (from the database URL: notion.so/workspace/<DB_ID>?v=...)\n2. In the 'Filter' field, add a filter:\n     Property: Name (or your title column)\n     Condition: Contains\n     Value: {{ $json.keyword }}\n\nIf no matching epic is found, the IF node routes to Create Epic.\nOtherwise, the first match is used as the linked epic."
+      "notes": "Queries the 🗺️ Epics database for a page whose title contains the keyword.\n\nAfter importing, open this node and add a filter:\n  Property: Name\n  Condition: Contains\n  Value: {{ $json.keyword }}\n\nIf no matching epic is found, the IF node routes to Create Epic.\nOtherwise, the first match is used as the linked epic."
     },
     {
       "parameters": {
@@ -73,7 +73,7 @@
       "parameters": {
         "resource": "databasePage",
         "operation": "create",
-        "databaseId": "YOUR_EPICS_DB_ID",
+        "databaseId": "c3e27dbc16f14a88bfaef93f507100d1",
         "properties": {
           "Name": {
             "title": [
@@ -91,13 +91,13 @@
       "type": "n8n-nodes-base.notion",
       "typeVersion": 2,
       "position": [1500, 350],
-      "notes": "Creates a new page in the Epics database.\n\nOnly runs when no matching epic was found (IF false branch).\nUses the keyword extracted from the task name as the epic title.\n\nThe newly created page ID flows into Create Backlog Ticket for the\nEpic relation."
+      "notes": "Creates a new page in the 🗺️ Epics database.\n\nOnly runs when no matching epic was found (IF false branch).\nUses the keyword extracted from the task name as the epic title.\n\nThe newly created page ID flows into Create Backlog Ticket for the\nEpic relation."
     },
     {
       "parameters": {
         "resource": "databasePage",
         "operation": "create",
-        "databaseId": "YOUR_BACKLOG_DB_ID",
+        "databaseId": "c4b121b8498d44c4b0d5da50f5b28dfb",
         "properties": {
           "Name": {
             "title": [
@@ -150,7 +150,7 @@
       "type": "n8n-nodes-base.notion",
       "typeVersion": 2,
       "position": [1500, 150],
-      "notes": "Creates the backlog ticket in Notion with all fields mapped from the Todoist task.\n\nThis node runs regardless of whether an epic was found or created.\nIt receives the epic page from either:\n  - Search Epics → IF (true)  → here   (found epic)\n  - Search Epics → IF (false) → Create Epic → here   (new epic)\n\nIn both cases, {{ $json.id }} resolves to the epic's Notion page ID.\n\n⚠️  CONFIGURATION REQUIRED:\n1. Replace YOUR_BACKLOG_DB_ID with your actual Backlog database ID\n2. Verify property names match your Notion database schema:\n     - Name (title)\n     - Description (rich_text)\n     - Priority (select: Urgent / High / Medium / Low)\n     - Status (status: Backlog)\n     - Todoist ID (rich_text)\n     - Epic (relation → Epics database)\n\n   Rename these keys in the JSON if your schema uses different names."
+      "notes": "Creates the backlog ticket in the 📥 Backlog database with all fields mapped from the Todoist task.\n\nThis node runs regardless of whether an epic was found or created.\nIt receives the epic page from either:\n  - Search Epics → IF (true)  → here   (found epic)\n  - Search Epics → IF (false) → Create Epic → here   (new epic)\n\nIn both cases, {{ $json.id }} resolves to the epic's Notion page ID.\n\nAll database IDs and property names are pre-configured to match\nthe 🗺️ Epics and 📥 Backlog databases in the AI Dashboard workspace."
     }
   ],
   "connections": {
