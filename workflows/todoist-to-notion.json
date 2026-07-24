@@ -1,28 +1,59 @@
 {
   "name": "Todoist → Notion Backlog Sync",
+  "id": "f7d8e9a0-1111-4222-8333-000000000001",
   "nodes": [
     {
       "parameters": {
-        "resource": "sync",
-        "syncType": "all"
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
       },
       "id": "a1b2c3d4-0001-4000-8000-000000000001",
-      "name": "Todoist Trigger",
-      "type": "n8n-nodes-base.todoistTrigger",
+      "name": "Every 5 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1,
-      "position": [300, 150],
-      "notes": "Polls Todoist for new tasks.\n\nAfter importing, open this node and:\n1. Select your Todoist credential\n2. Under 'Filters', add a project filter for 'Backlog'\n\nAlternatively, keep it unfiltered and add a Filter node before the Code node.\n\nOutput fields used downstream:\n  - id (task ID)\n  - content (task name)\n  - description (task description)\n  - priority (1-4, where 4 = p1/urgent)"
+      "position": [250, 150],
+      "notes": "Polls every 5 minutes. Adjust the interval if you want faster/slower sync.\n\nSince n8n v2 removed the dedicated Todoist Trigger, we use a schedule + Todoist polling approach instead.\n\nThe Code node downstream handles deduplication so the same task is never imported twice."
     },
     {
       "parameters": {
-        "jsCode": "// -------------------------------------------------\n// Extract keyword from task name for epic matching\n// and normalize all task data for downstream nodes.\n// -------------------------------------------------\n\nconst task = $input.first().json;\n\n// --- Keyword extraction ---\n// Strategy: take the text before the first colon, dash, or em-dash.\n// Fall back to the first two words if no delimiter found.\nconst taskName = task.content || '';\nconst parts = taskName.split(/[:\\-\\u2013\\u2014]/);\nconst firstPart = parts[0].trim();\nconst words = firstPart.split(/\\s+/);\nconst keyword = words.slice(0, 2).join(' ');\n\n// --- Priority mapping (Todoist → Notion) ---\n// Todoist: 4=p1 (most urgent), 1=p4 (least urgent)\nconst priorityMap = { 4: 'Urgent', 3: 'High', 2: 'Medium', 1: 'Low' };\n\nreturn {\n  keyword: keyword || taskName,\n  taskId: String(task.id),\n  taskName: taskName,\n  taskDescription: task.description || '',\n  taskPriority: priorityMap[task.priority] || 'Medium',\n  taskUrl: task.url || '',\n  todoistPriority: task.priority\n};"
+        "method": "GET",
+        "url": "https://api.todoist.com/rest/v1/tasks",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "YOUR_TODOIST_BACKLOG_PROJECT_ID"
+            }
+          ]
+        },
+        "options": {}
       },
       "id": "a1b2c3d4-0002-4000-8000-000000000002",
-      "name": "Extract Keyword",
+      "name": "Fetch Todoist Tasks",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [550, 150],
+      "notes": "Calls Todoist REST API v1 to fetch tasks from the Backlog project.\n\nThe deprecated n8n Todoist node was replaced with a direct HTTP\ncall because it still uses the old Sync API (v9).\n\nAfter importing:\n1. Create a credential: Settings → Credentials → Header Auth\n     Name:  Authorization\n     Value: Bearer YOUR_TODOIST_TOKEN\n2. Select that credential in this node's 'Authentication' dropdown\n3. Replace YOUR_TODOIST_BACKLOG_PROJECT_ID with your actual project ID\n   (Find it by opening the Backlog project in Todoist web → URL has the ID)\n\nResponse fields: id, content, description, priority (1-4)"
+    },
+    {
+      "parameters": {
+        "jsCode": "// -------------------------------------------------\n// Dedup + keyword extraction + priority mapping\n// -------------------------------------------------\n// Uses n8n static data to remember which Todoist task\n// IDs have already been synced, so the same task is\n// never imported twice even though we poll on a timer.\n// -------------------------------------------------\n\nconst tasks = $input.all();\nconst staticData = $getWorkflowStaticData('global');\n\n// Initialize the synced-IDs set if this is the first run\nif (!staticData.syncedIds) {\n  staticData.syncedIds = [];\n}\n\n// Keep only tasks we haven't synced yet\nconst newTasks = tasks.filter(t => {\n  const tid = String(t.json.id);\n  return !staticData.syncedIds.includes(tid);\n});\n\nif (newTasks.length === 0) {\n  // No new tasks — stop the workflow gracefully\n  throw new Error('NO_NEW_TASKS');\n}\n\n// Process each new task and mark as synced\nconst output = newTasks.map(t => {\n  const task = t.json;\n  const tid = String(task.id);\n\n  // Mark as synced immediately\n  staticData.syncedIds.push(tid);\n\n  // Keep only last 500 IDs to avoid memory bloat\n  if (staticData.syncedIds.length > 500) {\n    staticData.syncedIds = staticData.syncedIds.slice(-500);\n  }\n\n  // --- Keyword extraction for epic matching ---\n  const taskName = task.content || '';\n  const parts = taskName.split(/[:\\-\\u2013\\u2014]/);\n  const firstPart = parts[0].trim();\n  const words = firstPart.split(/\\s+/);\n  const keyword = words.slice(0, 2).join(' ');\n\n  // --- Priority mapping (Todoist → Notion) ---\n  const priorityMap = { 4: 'Urgent', 3: 'High', 2: 'Medium', 1: 'Low' };\n\n  return {\n    keyword: keyword || taskName,\n    taskId: tid,\n    taskName: taskName,\n    taskDescription: task.description || '',\n    taskPriority: priorityMap[task.priority] || 'Medium',\n    taskUrl: task.url || '',\n    todoistPriority: task.priority\n  };\n});\n\nreturn output;"
+      },
+      "id": "a1b2c3d4-0003-4000-8000-000000000003",
+      "name": "Dedup & Extract",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [600, 150],
-      "notes": "Transforms the raw Todoist task into a clean payload for the rest of the workflow.\n\nFields produced:\n  keyword         — text used to search for a matching epic\n  taskId          — Todoist task ID (stored on the Notion ticket)\n  taskName        — becomes the Notion ticket title\n  taskDescription — becomes the Notion ticket description\n  taskPriority    — mapped to Notion select (Urgent / High / Medium / Low)\n  taskUrl         — link back to the Todoist task"
+      "position": [850, 150],
+      "notes": "Three jobs in one Code node:\n\n1. DEDUP — uses workflow static data to track synced Todoist task IDs.\n   If a task was already imported, it's skipped. Keeps the last 500 IDs.\n\n2. KEYWORD — extracts a keyword from the task name for epic matching.\n   Takes text before any colon/dash as the potential epic name.\n\n3. PRIORITY — maps Todoist priority (1-4) to Notion select labels\n   (Urgent / High / Medium / Low)."
     },
     {
       "parameters": {
@@ -33,12 +64,12 @@
         "limit": 5,
         "simple": true
       },
-      "id": "a1b2c3d4-0003-4000-8000-000000000003",
+      "id": "a1b2c3d4-0004-4000-8000-000000000004",
       "name": "Search Epics",
       "type": "n8n-nodes-base.notion",
       "typeVersion": 2,
-      "position": [900, 150],
-      "notes": "Queries the 🗺️ Epics database for a page whose title contains the keyword.\n\nAfter importing, open this node and add a filter:\n  Property: Name\n  Condition: Contains\n  Value: {{ $json.keyword }}\n\nIf no matching epic is found, the IF node routes to Create Epic.\nOtherwise, the first match is used as the linked epic."
+      "position": [1150, 150],
+      "notes": "Queries the 🗺️ Epics database for a page whose title contains the keyword.\n\nAfter importing, open this node, select your Notion credential, and add a filter:\n  Property: Name\n  Condition: Contains\n  Value: {{ $json.keyword }}"
     },
     {
       "parameters": {
@@ -62,12 +93,12 @@
           "combinator": "and"
         }
       },
-      "id": "a1b2c3d4-0004-4000-8000-000000000004",
+      "id": "a1b2c3d4-0005-4000-8000-000000000005",
       "name": "Epic Found?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1200, 150],
-      "notes": "Routes the flow based on whether the Notion search returned any results.\n\nTRUE  (epic found)    → goes directly to Create Backlog Ticket\nFALSE (no epic found) → goes to Create Epic first, then Create Backlog Ticket\n\nBoth branches converge at Create Backlog Ticket so there is only one ticket-creation node."
+      "position": [1450, 150],
+      "notes": "TRUE  → goes directly to Create Backlog Ticket with the found epic\nFALSE → goes to Create Epic first, then to Create Backlog Ticket"
     },
     {
       "parameters": {
@@ -79,19 +110,19 @@
             "title": [
               {
                 "text": {
-                  "content": "={{ $('Extract Keyword').item.json.keyword }}"
+                  "content": "={{ $('Dedup & Extract').item.json.keyword }}"
                 }
               }
             ]
           }
         }
       },
-      "id": "a1b2c3d4-0005-4000-8000-000000000005",
+      "id": "a1b2c3d4-0006-4000-8000-000000000006",
       "name": "Create Epic",
       "type": "n8n-nodes-base.notion",
       "typeVersion": 2,
-      "position": [1500, 350],
-      "notes": "Creates a new page in the 🗺️ Epics database.\n\nOnly runs when no matching epic was found (IF false branch).\nUses the keyword extracted from the task name as the epic title.\n\nThe newly created page ID flows into Create Backlog Ticket for the\nEpic relation."
+      "position": [1750, 350],
+      "notes": "Creates a new page in 🗺️ Epics when no matching epic is found.\nUses the extracted keyword as the epic title.\nSelect your Notion credential after importing."
     },
     {
       "parameters": {
@@ -103,7 +134,7 @@
             "title": [
               {
                 "text": {
-                  "content": "={{ $('Extract Keyword').item.json.taskName }}"
+                  "content": "={{ $('Dedup & Extract').item.json.taskName }}"
                 }
               }
             ]
@@ -112,14 +143,14 @@
             "rich_text": [
               {
                 "text": {
-                  "content": "={{ $('Extract Keyword').item.json.taskDescription }}"
+                  "content": "={{ $('Dedup & Extract').item.json.taskDescription }}"
                 }
               }
             ]
           },
           "Priority": {
             "select": {
-              "name": "={{ $('Extract Keyword').item.json.taskPriority }}"
+              "name": "={{ $('Dedup & Extract').item.json.taskPriority }}"
             }
           },
           "Status": {
@@ -131,7 +162,7 @@
             "rich_text": [
               {
                 "text": {
-                  "content": "={{ $('Extract Keyword').item.json.taskId }}"
+                  "content": "={{ $('Dedup & Extract').item.json.taskId }}"
                 }
               }
             ]
@@ -145,27 +176,61 @@
           }
         }
       },
-      "id": "a1b2c3d4-0006-4000-8000-000000000006",
+      "id": "a1b2c3d4-0007-4000-8000-000000000007",
       "name": "Create Backlog Ticket",
       "type": "n8n-nodes-base.notion",
       "typeVersion": 2,
-      "position": [1500, 150],
-      "notes": "Creates the backlog ticket in the 📥 Backlog database with all fields mapped from the Todoist task.\n\nThis node runs regardless of whether an epic was found or created.\nIt receives the epic page from either:\n  - Search Epics → IF (true)  → here   (found epic)\n  - Search Epics → IF (false) → Create Epic → here   (new epic)\n\nIn both cases, {{ $json.id }} resolves to the epic's Notion page ID.\n\nAll database IDs and property names are pre-configured to match\nthe 🗺️ Epics and 📥 Backlog databases in the AI Dashboard workspace."
+      "position": [1750, 150],
+      "notes": "Creates the ticket in 📥 Backlog with all fields mapped.\n\nReceives the epic page from either the search result (found) or\nthe newly created epic (not found). In both cases {{ $json.id }}\nresolves to the epic's Notion page ID for the relation.\n\nSelect your Notion credential after importing."
+    },
+    {
+      "parameters": {
+        "mode": "each",
+        "continueOnFail": true
+      },
+      "id": "a1b2c3d4-0008-4000-8000-000000000008",
+      "name": "Loop Each Task",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 2,
+      "position": [1150, 450],
+      "notes": "Splits the task list so each task is processed individually through\nSearch Epics → IF → (Create Epic) → Create Backlog Ticket.\n\nPreviously the workflow assumed one task at a time (trigger mode).\nSince we now poll on a schedule, multiple tasks may arrive at once."
     }
   ],
   "connections": {
-    "Todoist Trigger": {
+    "Every 5 Minutes": {
       "main": [
         [
           {
-            "node": "Extract Keyword",
+            "node": "Fetch Todoist Tasks",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Extract Keyword": {
+    "Fetch Todoist Tasks": {
+      "main": [
+        [
+          {
+            "node": "Dedup & Extract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dedup & Extract": {
+      "main": [
+        [
+          {
+            "node": "Loop Each Task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Each Task": {
       "main": [
         [
           {
@@ -223,6 +288,6 @@
   },
   "staticData": null,
   "pinData": {},
-  "versionId": "1.0.0",
+  "versionId": "2.0.0",
   "active": false
 }
